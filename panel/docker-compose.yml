@@ -1,0 +1,47 @@
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PANEL_DATABASE_HOST: mysql
+      PANEL_DATABASE_PORT: "3306"
+      PANEL_DATABASE_DATABASE: pelican
+      PANEL_DATABASE_USERNAME: pelican
+      PANEL_DATABASE_PASSWORD: secret
+      PANEL_REDIS_HOST: redis
+      PANEL_REDIS_PORT: "6379"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: pelican
+      MYSQL_USER: pelican
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  mysql_data:
