@@ -8,10 +8,10 @@ set -euo pipefail
 #                                                                                     #
 #   github.com/YanIanZ/pelican-go                                                     #
 #                                                                                     #
-#   One-command full installation from Go source.                                     #
+#   One-command install from local source.                                       #
 #                                                                                     #
-#   Usage:                                                                            #
-#     curl -fsSL raw.git/pelican-go/main/kaneil-installer/install.sh | sudo bash      #
+#   Usage (from repo root):                                                           #
+#     cd kaneil-installer && sudo ./install.sh                                        #
 #                                                                                     #
 #   Env vars (non-interactive):                                                       #
 #     FQDN=MYSQL_PASSWORD=... sudo -E bash install.sh                                 #
@@ -22,8 +22,6 @@ set -euo pipefail
 
 # ── configuration (override via env) ────────────────────────────────────────────────
 export DEBIAN_FRONTEND=noninteractive
-REPO_URL="${REPO_URL:-https://github.com/YanIanZ/pelican-go.git}"
-REPO_BRANCH="${REPO_BRANCH:-main}"
 GO_VERSION="${GO_VERSION:-1.25.7}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/pelican}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/pelican}"
@@ -164,33 +162,29 @@ need_nginx() {
     ok "nginx"
 }
 
-need_git()      { check_cmd git      || { pkg_update; pkg git;      }; ok "git"; }
 need_curl()     { check_cmd curl     || { pkg_update; pkg curl;     }; ok "curl"; }
 need_certbot()  { check_cmd certbot  || { pkg_update; pkg certbot;  }; ok "certbot"; }
 
-# ── clone + build ───────────────────────────────────────────────────────────────────
-
-clone_repo() {
-    say "cloning pelican-go ($REPO_BRANCH)..."
-    local dest="/opt/pelican-src"
-    if [ -d "$dest" ]; then rm -rf "$dest"; fi
-    git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$dest"
-    echo "$dest"
-}
+# ── build from local source ──────────────────────────────────────────────────────────
+# installer lives in kaneil-installer/, panel/ and wings/ are siblings
+_script_dir="$(cd "$(dirname "$0")" && pwd)"
+_project_dir="$(dirname "$_script_dir")"
 
 build_panel() {
-    local src="$1"
-    say "building pelican panel..."
-    cd "$src/panel"
+    local src="${PANEL_SRC:-$_project_dir/panel}"
+    [ -f "$src/go.mod" ] || die "panel source not found at $src"
+    say "building panel..."
+    cd "$src"
     go mod download
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/panel" ./cmd/panel
     ok "panel → $INSTALL_DIR/panel"
 }
 
 build_wings() {
-    local src="$1"
-    say "building pelican wings..."
-    cd "$src/wings"
+    local src="${WINGS_SRC:-$_project_dir/wings}"
+    [ -f "$src/go.mod" ] || die "wings source not found at $src"
+    say "building wings..."
+    cd "$src"
     go mod download
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/wings" .
     ok "wings → $INSTALL_DIR/wings"
@@ -519,7 +513,6 @@ main() {
 
     say "checking dependencies..."
     need_curl
-    need_git
 
     if [ "$INSTALL_PANEL" = "yes" ]; then
         need_mariadb
@@ -535,19 +528,16 @@ main() {
     need_certbot
     say "all dependencies satisfied"
 
-    # clone and build
-    local src
-    src=$(clone_repo)
     mkdir -p "$INSTALL_DIR"
 
     if [ "$INSTALL_PANEL" = "yes" ]; then
-        build_panel "$src"
+        build_panel
         setup_db
         write_panel_config
     fi
 
     if [ "$INSTALL_WINGS" = "yes" ]; then
-        build_wings "$src"
+        build_wings
         write_wings_config
     fi
 
@@ -559,10 +549,6 @@ main() {
 
     setup_firewall
     summary
-
-    # cleanup source to save space
-    rm -rf "$src"
-    say "cleaned build source"
 }
 
 main "$@"
