@@ -84,7 +84,7 @@ detect_os() {
 }
 
 pkg()   { $PKG "$@" 2>/dev/null || $PKG "$@"; }
-update(){ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] && apt-get update -qq; }
+update(){ [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] && apt-get update -qq; }
 
 # ─── dependency installers ───────────────────────────────────────────────────
 
