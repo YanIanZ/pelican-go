@@ -1,241 +1,215 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2155
+set -euo pipefail
 
-######################################################################################
-#  KaNeil (Pelican) — Full Go Installer                                              #
-#  One-command Panel + Wings installation from source                                #
-#  github.com/YanIanZ/pelican-go                                                     #
-######################################################################################
+#######################################################################################
+#                                                                                     #
+#   Pelican (KaNeil) — Go Panel + Wings Installer                                     #
+#                                                                                     #
+#   github.com/YanIanZ/pelican-go                                                     #
+#                                                                                     #
+#   One-command full installation from Go source.                                     #
+#                                                                                     #
+#   Usage:                                                                            #
+#     curl -fsSL raw.git/pelican-go/main/kaneil-installer/install.sh | sudo bash      #
+#                                                                                     #
+#   Env vars (non-interactive):                                                       #
+#     FQDN=MYSQL_PASSWORD=... sudo -E bash install.sh                                 #
+#                                                                                     #
+#######################################################################################
 
-if [[ $EUID -ne 0 ]]; then
-    echo "ERROR: Must run as root." >&2
-    exit 1
-fi
+[[ $EUID -ne 0 ]] && { echo "ERROR: must run as root" >&2; exit 1; }
 
-# ---- Configurable env vars ----
-FQDN="${FQDN:-localhost}"
-EMAIL="${EMAIL:-}"
-ASSUME_SSL="${ASSUME_SSL:-false}"
-CONFIGURE_LETSENCRYPT="${CONFIGURE_LETSENCRYPT:-false}"
-CONFIGURE_FIREWALL="${CONFIGURE_FIREWALL:-false}"
-MYSQL_DB="${MYSQL_DB:-panel}"
-MYSQL_USER="${MYSQL_USER:-kaneil}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')}"
-PANEL_TAG="${PANEL_TAG:-main}"
-WINGS_TAG="${WINGS_TAG:-main}"
-INSTALL_PANEL="${INSTALL_PANEL:-true}"
-INSTALL_WINGS="${INSTALL_WINGS:-true}"
+# ── configuration (override via env) ────────────────────────────────────────────────
+export DEBIAN_FRONTEND=noninteractive
+REPO_URL="${REPO_URL:-https://github.com/YanIanZ/pelican-go.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
 GO_VERSION="${GO_VERSION:-1.25.7}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/pelican}"
-REPO_URL="${REPO_URL:-https://github.com/YanIanZ/pelican-go.git}"
-BRANCH="${BRANCH:-main}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/pelican}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$SCRIPT_DIR/.."
+# what to install
+INSTALL_PANEL="${INSTALL_PANEL:-yes}"
+INSTALL_WINGS="${INSTALL_WINGS:-yes}"
+INSTALL_NGINX="${INSTALL_NGINX:-yes}"
+CONFIGURE_FIREWALL="${CONFIGURE_FIREWALL:-no}"
+ASSUME_SSL="${ASSUME_SSL:-no}"
 
-# Load lib if available
-if [ -f "$SCRIPT_DIR/lib/lib.sh" ]; then
-    source "$SCRIPT_DIR/lib/lib.sh"
-fi
+# panel config
+PANEL_FQDN="${FQDN:-$(hostname -f 2>/dev/null || echo localhost)}"
+PANEL_EMAIL="${EMAIL:-}"
+MYSQL_DB="${MYSQL_DB:-pelican}"
+MYSQL_USER="${MYSQL_USER:-pelican}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-$(head -c24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c24)}"
+APP_SECRET="${APP_SECRET:-$(head -c32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c32)}"
 
-# ---- Colors ----
-C_NC='\033[0m'; C_G='\033[0;32m'; C_Y='\033[1;33m'; C_R='\033[0;31m'; C_B='\033[0;34m'
-OK="  [${C_G}OK${C_NC}]"
-WARN="  [${C_Y}!!${C_NC}]"
-ERR="[ERROR]"
+# wings config
+WINGS_UUID="${WINGS_UUID:-}"
+WINGS_TOKEN_ID="${WINGS_TOKEN_ID:-}"
+WINGS_TOKEN="${WINGS_TOKEN:-}"
 
-# ---- Logging ----
-log()   { echo -e "${C_B}  >>>${C_NC} $*"; }
-good()  { echo -e "$OK $*"; }
-warn()  { echo -e "$WARN $*"; }
-fail()  { echo -e "${C_R}${ERR}${C_NC} $*" >&2; }
-banner() {
+# ── helpers ─────────────────────────────────────────────────────────────────────────
+R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; N='\033[0m'
+OK="${G}✓${N}"; WARN="${Y}!${N}"
+
+say()    { echo -e " ${B}→${N} $*"; }
+ok()     { echo -e " ${OK} $*"; }
+alert()  { echo -e " ${WARN} $*"; }
+die()    { echo -e "${R}✗ $*${N}" >&2; exit 1; }
+
+header() {
     echo ""
-    echo -e "${C_B}  ╔══════════════════════════════════════════╗${C_NC}"
-    echo -e "${C_B}  ║      ${C_G}KaNeil (Pelican) Go Installer${C_B}       ║${C_NC}"
-    echo -e "${C_B}  ║    Panel + Wings — Full Go Source Build   ║${C_NC}"
-    echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_NC}"
+    echo -e "${B}╔══════════════════════════════════════════════════╗${N}"
+    echo -e "${B}║      ${G}Pelican (KaNeil) — Go Full-Stack Installer${B}      ║${N}"
+    echo -e "${B}║          Panel + Wings built from source          ║${N}"
+    echo -e "${B}╚══════════════════════════════════════════════════╝${N}"
     echo ""
 }
 
-# ---- OS Detection ----
-detect_os() {
+check_cmd() { command -v "$1" &>/dev/null; }
+
+os_detect() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        OS_ID="$(echo "$ID" | tr '[:upper:]' '[:lower:]')"
-        OS_VER="$(echo "$VERSION_ID" | cut -d. -f1)"
+        OS_ID="${ID}"; OS_VER="${VERSION_ID%%.*}"
     elif [ -f /etc/debian_version ]; then
-        OS_ID="debian"
-        OS_VER="$(cat /etc/debian_version | cut -d. -f1)"
+        OS_ID="debian"; OS_VER="$(cat /etc/debian_version | cut -d. -f1)"
     else
-        fail "Unsupported OS"
-        exit 1
+        die "unsupported OS — Ubuntu / Debian / Rocky / AlmaLinux only"
     fi
+
     case "$(uname -m)" in
-        x86_64)  ARCH="amd64";;
-        aarch64|arm64) ARCH="arm64";;
-        *) fail "Unsupported arch: $(uname -m)"; exit 1;;
+        x86_64)  GO_ARCH="amd64"  ;;
+        arm64|aarch64) GO_ARCH="arm64" ;;
+        *) die "unsupported architecture: $(uname -m)" ;;
     esac
-    log "OS: $OS_ID $OS_VER | Arch: $ARCH"
+    say "detected: $OS_ID $OS_VER / $GO_ARCH"
 }
 
-# ---- Package helpers ----
-pkg_install() {
+# ── package helpers ─────────────────────────────────────────────────────────────────
+pkg() {
     case "$OS_ID" in
-        ubuntu|debian)
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq && apt-get install -y -qq "$@"
-            ;;
-        rocky|almalinux|rhel|centos|fedora)
-            dnf install -y -q "$@"
-            ;;
+        ubuntu|debian)          apt-get install -y -qq "$@" ;;
+        rocky|almalinux|rhel)   dnf install -y -q "$@" ;;
+        fedora)                 dnf install -y -q "$@" ;;
     esac
 }
 
-# ---- Install Go ----
-install_go() {
-    if command -v go &>/dev/null; then
-        local v; v=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | tr -d 'go')
-        if printf '%s\n%s\n' "1.25" "$v" | sort -V -C 2>/dev/null; then
-            good "Go $v found"
-            return 0
+pkg_update() {
+    case "$OS_ID" in
+        ubuntu|debian) apt-get update -qq ;;
+    esac
+}
+
+# ── dependency installers ───────────────────────────────────────────────────────────
+
+need_go() {
+    local want="1.25"
+    if check_cmd go; then
+        local have; have=$(go version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if printf '%s\n%s\n' "$want" "$have" | sort -V -C 2>/dev/null; then
+            ok "go $have"
+            return
         fi
     fi
-
-    log "Installing Go $GO_VERSION..."
-    local go_tar="go${GO_VERSION}.linux-${ARCH}.tar.gz"
-    curl -sSfL "https://go.dev/dl/${go_tar}" -o "/tmp/${go_tar}"
+    say "installing go ${GO_VERSION}..."
+    local tgz="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    curl -fsSL "https://go.dev/dl/${tgz}" -o "/tmp/${tgz}"
     rm -rf /usr/local/go
-    tar -C /usr/local -xzf "/tmp/${go_tar}"
-    rm -f "/tmp/${go_tar}"
-
-    grep -q '/usr/local/go/bin' /etc/profile 2>/dev/null || \
+    tar -C /usr/local -xzf "/tmp/${tgz}"
+    rm -f "/tmp/${tgz}"
+    export PATH="/usr/local/go/bin:$PATH"
+    grep -qx 'export PATH=.*/usr/local/go/bin' /etc/profile 2>/dev/null || \
         echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-    export PATH="$PATH:/usr/local/go/bin"
-    good "Go $GO_VERSION installed"
+    ok "go ${GO_VERSION}"
 }
 
-# ---- Install Docker ----
-install_docker() {
-    if command -v docker &>/dev/null; then
-        good "Docker found"
-        return 0
-    fi
-    log "Installing Docker..."
+need_docker() {
+    if check_cmd docker; then ok "docker"; return; fi
+    say "installing docker..."
     curl -fsSL https://get.docker.com | bash
     systemctl enable --now docker
-    good "Docker installed"
+    ok "docker"
 }
 
-# ---- Install MariaDB ----
-install_mariadb() {
-    if command -v mariadb &>/dev/null; then
-        good "MariaDB found"
-        return 0
-    fi
-    if command -v mysql &>/dev/null; then
-        good "MySQL found"
-        return 0
-    fi
-    log "Installing MariaDB..."
+need_mariadb() {
+    if check_cmd mariadb || check_cmd mysql; then ok "mariadb/mysql"; return; fi
+    say "installing mariadb..."
+    pkg_update
     case "$OS_ID" in
-        ubuntu|debian)
-            pkg_install mariadb-server mariadb-client
-            ;;
-        rocky|almalinux|rhel|centos|fedora)
-            curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash
-            pkg_install MariaDB-server MariaDB-client
-            ;;
+        ubuntu|debian) pkg mariadb-server mariadb-client ;;
+        rocky|almalinux|rhel|fedora)
+            curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash
+            pkg MariaDB-server MariaDB-client ;;
     esac
-    systemctl enable --now mariadb || systemctl enable --now mysql
-    good "MariaDB installed"
+    systemctl enable --now mariadb 2>/dev/null || systemctl enable --now mysql 2>/dev/null || true
+    ok "mariadb"
 }
 
-# ---- Install Redis ----
-install_redis() {
-    if command -v redis-server &>/dev/null; then
-        good "Redis found"
-        return 0
-    fi
-    log "Installing Redis..."
-    pkg_install redis-server 2>/dev/null || pkg_install redis
-    systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis
-    good "Redis installed"
+need_redis() {
+    if check_cmd redis-server; then ok "redis"; return; fi
+    say "installing redis..."
+    pkg_update
+    pkg redis-server 2>/dev/null || pkg redis
+    systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
+    ok "redis"
 }
 
-# ---- Install Nginx ----
-install_nginx() {
-    if command -v nginx &>/dev/null; then
-        good "Nginx found"
-        return 0
-    fi
-    log "Installing Nginx..."
-    pkg_install nginx
+need_nginx() {
+    if check_cmd nginx; then ok "nginx"; return; fi
+    say "installing nginx..."
+    pkg_update
+    pkg nginx
     systemctl enable --now nginx
-    good "Nginx installed"
+    ok "nginx"
 }
 
-# ---- Clone/Build Panel from Go source ----
+need_git()      { check_cmd git      || { pkg_update; pkg git;      }; ok "git"; }
+need_curl()     { check_cmd curl     || { pkg_update; pkg curl;     }; ok "curl"; }
+need_certbot()  { check_cmd certbot  || { pkg_update; pkg certbot;  }; ok "certbot"; }
+
+# ── clone + build ───────────────────────────────────────────────────────────────────
+
+clone_repo() {
+    say "cloning pelican-go ($REPO_BRANCH)..."
+    local dest="/opt/pelican-src"
+    if [ -d "$dest" ]; then rm -rf "$dest"; fi
+    git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$dest"
+    echo "$dest"
+}
+
 build_panel() {
-    log "Building Panel from Go source..."
-    local panel_src="$REPO_DIR/panel"
-
-    if [ ! -f "$panel_src/go.mod" ]; then
-        log "Cloning panel source..."
-        mkdir -p "$(dirname "$panel_src")"
-        if [ -d "$panel_src" ]; then rm -rf "$panel_src"; fi
-        git clone --branch "$PANEL_TAG" "$REPO_URL" /tmp/pelican-clone
-        cp -r /tmp/pelican-clone/panel "$panel_src"
-        rm -rf /tmp/pelican-clone
-    fi
-
-    cd "$panel_src"
+    local src="$1"
+    say "building pelican panel..."
+    cd "$src/panel"
     go mod download
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/panel" ./cmd/panel
-    good "Panel binary: $INSTALL_DIR/panel"
+    ok "panel → $INSTALL_DIR/panel"
 }
 
-# ---- Build Wings from Go source ----
 build_wings() {
-    log "Building Wings from Go source..."
-    local wings_src="$REPO_DIR/wings"
-
-    if [ ! -f "$wings_src/go.mod" ]; then
-        log "Cloning wings source..."
-        git clone --branch "$WINGS_TAG" "$REPO_URL" /tmp/pelican-clone
-        cp -r /tmp/pelican-clone/wings "$wings_src"
-        rm -rf /tmp/pelican-clone
-    fi
-
-    cd "$wings_src"
+    local src="$1"
+    say "building pelican wings..."
+    cd "$src/wings"
     go mod download
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/wings" .
-    good "Wings binary: $INSTALL_DIR/wings"
+    ok "wings → $INSTALL_DIR/wings"
 }
 
-# ---- Setup Panel database ----
-setup_database() {
-    log "Setting up database..."
-    mariadb -u root -e "CREATE DATABASE IF NOT EXISTS $MYSQL_DB;" 2>/dev/null || true
-    mariadb -u root -e "CREATE USER IF NOT EXISTS '$MYSQL_USER'@'127.0.0.1' IDENTIFIED BY '$MYSQL_PASSWORD';" 2>/dev/null || true
-    mariadb -u root -e "ALTER USER '$MYSQL_USER'@'127.0.0.1' IDENTIFIED BY '$MYSQL_PASSWORD';" 2>/dev/null || true
-    mariadb -u root -e "GRANT ALL PRIVILEGES ON $MYSQL_DB.* TO '$MYSQL_USER'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null || true
-    mariadb -u root -e "FLUSH PRIVILEGES;" 2>/dev/null || true
-    good "Database $MYSQL_DB ready (user: $MYSQL_USER)"
-}
+# ── config generators ───────────────────────────────────────────────────────────────
 
-# ---- Write Panel config ----
 write_panel_config() {
-    log "Writing panel config..."
-    mkdir -p /etc/pelican
-    cat > /etc/pelican/panel.yml << YEOF
+    say "writing $CONFIG_DIR/panel.yml..."
+    mkdir -p "$CONFIG_DIR"
+    cat > "$CONFIG_DIR/panel.yml" << EOF
 app:
   name: Pelican
   env: production
   debug: false
-  url: "${PROTO:-http}://${FQDN}"
+  url: "${PROTO:-http}://${PANEL_FQDN}"
   timezone: UTC
   locale: en
+  secret: "${APP_SECRET}"
 
 database:
   driver: mysql
@@ -267,48 +241,56 @@ panel:
   editable_server_descriptions: true
   webhook_prune_days: 30
   files_max_edit_size: 4194304
-YEOF
-    good "Panel config: /etc/pelican/panel.yml"
-    log "MySQL password: ${MYSQL_PASSWORD}"
+EOF
+    ok "panel config"
 }
 
-# ---- Write Wings config ----
 write_wings_config() {
-    log "Writing wings config..."
-    mkdir -p /etc/pelican
-    mkdir -p /var/lib/pelican/volumes /var/log/pelican /tmp/pelican
+    say "writing $CONFIG_DIR/config.yml..."
+    mkdir -p "$CONFIG_DIR" /var/lib/pelican/volumes /var/lib/pelican/archives /var/lib/pelican/backups /var/log/pelican /tmp/pelican
 
-    local fqdn_lower
-    fqdn_lower=$(echo "$FQDN" | tr '[:upper:]' '[:lower:]')
+    local fqdn_lower; fqdn_lower=$(echo "$PANEL_FQDN" | tr '[:upper:]' '[:lower:]')
+    local ssl_enabled="false"; [ "$ASSUME_SSL" = "yes" ] && ssl_enabled="true"
 
-    cat > /etc/pelican/wings.yml << YEOF
+    cat > "$CONFIG_DIR/config.yml" << EOF
 debug: false
 app_name: Pelican
-uuid: ""
-token_id: ""
-token: ""
+uuid: "${WINGS_UUID}"
+token_id: "${WINGS_TOKEN_ID}"
+token: "${WINGS_TOKEN}"
+
 api:
   host: 0.0.0.0
   port: 8080
   ssl:
-    enabled: $([ "$ASSUME_SSL" = true ] && echo "true" || echo "false")
+    enabled: ${ssl_enabled}
     cert: /etc/letsencrypt/live/${fqdn_lower}/fullchain.pem
     key: /etc/letsencrypt/live/${fqdn_lower}/privkey.pem
   upload_limit: 100
+
 system:
-  data: /var/lib/pelican/volumes
-  sftp:
-    bind_port: 2022
-    bind_address: 0.0.0.0
+  root_directory: /var/lib/pelican
   log_directory: /var/log/pelican
+  data: /var/lib/pelican/volumes
+  archive_directory: /var/lib/pelican/archives
+  backup_directory: /var/lib/pelican/backups
   tmp_directory: /tmp/pelican
+  username: pelican
+  sftp:
+    bind_address: 0.0.0.0
+    bind_port: 2022
+
+remote: "${PROTO:-http}://${PANEL_FQDN}"
+
 allowed_mounts: []
-remote: "${PROTO:-http}://${FQDN}"
+
 docker:
   network:
     name: pelican_nw
     interface: 172.18.0.1
-    dns: ["1.1.1.1", "8.8.8.8"]
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     driver: bridge
     is_internal: false
     enable_icc: true
@@ -325,113 +307,107 @@ docker:
     default_multiplier: 1.05
     multipliers: {}
   use_performant_io_scheduler: true
+
 throttles:
   enabled: true
   lines: 2000
   line_reset_interval: 100
+
 crash_detection:
   enabled: true
-  max_crashes: 3
+  detect_clean_exit_as_crash: true
   timeout: 60
+
 backups:
   write_limit: 0
   compression_level: best_speed
+
 transfers:
   download_limit: 0
-YEOF
-    good "Wings config: /etc/pelican/wings.yml"
+
+allowed_origins:
+  - "${PROTO:-http}://${PANEL_FQDN}"
+EOF
+    ok "wings → $CONFIG_DIR/config.yml"
 }
 
-# ---- Nginx config ----
-write_nginx_config() {
-    if [ ! -f "/etc/nginx/sites-available/kaneil.conf" ]; then
-        log "Writing Nginx config..."
-        mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+# ── database ────────────────────────────────────────────────────────────────────────
 
-        if [ "$ASSUME_SSL" = true ]; then
-            cat > /etc/nginx/sites-available/kaneil.conf << 'NGXEOF'
+setup_db() {
+    say "setting up database..."
+    local mysql="mariadb"
+    check_cmd mysql && mysql="mysql"
+
+    $mysql -u root << SQL 2>/dev/null || true
+CREATE DATABASE IF NOT EXISTS \`${MYSQL_DB}\`;
+CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'127.0.0.1' IDENTIFIED BY '${MYSQL_PASSWORD}';
+ALTER USER '${MYSQL_USER}'@'127.0.0.1' IDENTIFIED BY '${MYSQL_PASSWORD}';
+GRANT ALL PRIVILEGES ON \`${MYSQL_DB}\`.* TO '${MYSQL_USER}'@'127.0.0.1' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+SQL
+    ok "database ${MYSQL_DB}"
+}
+
+# ── nginx ───────────────────────────────────────────────────────────────────────────
+
+setup_nginx() {
+    say "setting up nginx for ${PANEL_FQDN}..."
+    local conf="/etc/nginx/sites-available/pelican"
+
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+
+    cat > "$conf" << NGINX
 server {
     listen 80;
-    server_name CHANGE_ME;
-    return 301 https://$host$request_uri;
-}
-server {
-    listen 443 ssl http2;
-    server_name CHANGE_ME;
-    root /var/www/kaneil/public;
-    index index.html index.htm;
+    server_name ${PANEL_FQDN};
 
-    ssl_certificate /etc/letsencrypt/live/CHANGE_ME/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/CHANGE_ME/privkey.pem;
+    client_max_body_size 100m;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    location /api/client/servers {
+    location /api/client/servers/ {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
     }
 }
-NGXEOF
-        else
-            cat > /etc/nginx/sites-available/kaneil.conf << 'NGXEOF'
-server {
-    listen 80;
-    server_name CHANGE_ME;
-    root /var/www/kaneil/public;
-    index index.html index.htm;
+NGINX
 
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location /api/client/servers {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-NGXEOF
-        fi
-        sed -i "s/CHANGE_ME/${FQDN}/g" /etc/nginx/sites-available/kaneil.conf
-        ln -sf /etc/nginx/sites-available/kaneil.conf /etc/nginx/sites-enabled/kaneil.conf
-        rm -f /etc/nginx/sites-enabled/default
-        systemctl restart nginx
-        good "Nginx configured for $FQDN"
-    else
-        good "Nginx config exists, skipping"
-    fi
+    ln -sf "$conf" /etc/nginx/sites-enabled/pelican 2>/dev/null
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t && systemctl reload nginx
+    ok "nginx → $PANEL_FQDN"
 }
 
-# ---- Setup systemd ----
-setup_panel_service() {
-    log "Installing panel systemd service..."
-    cat > /etc/systemd/system/pelican-panel.service << SRVEOF
+# ── systemd ─────────────────────────────────────────────────────────────────────────
+
+install_services() {
+    mkdir -p "$INSTALL_DIR"
+
+    if [ "$INSTALL_PANEL" = "yes" ]; then
+        say "installing pelican-panel service..."
+        cat > /etc/systemd/system/pelican-panel.service << UNIT
 [Unit]
 Description=Pelican Panel
 After=network.target mariadb.service mysql.service redis.service redis-server.service
+Wants=mariadb.service redis.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/panel --config=/etc/pelican/panel.yml
+ExecStart=$INSTALL_DIR/panel --config=$CONFIG_DIR/panel.yml
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -439,122 +415,154 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-SRVEOF
-    systemctl daemon-reload
-    systemctl enable pelican-panel
-    systemctl start pelican-panel 2>/dev/null || warn "Panel service failed to start (check /etc/pelican/panel.yml)"
-    good "Panel service installed"
-}
+UNIT
+        systemctl daemon-reload
+        systemctl enable pelican-panel
+        systemctl start pelican-panel 2>/dev/null \
+            || alert "panel didn't start — check journalctl -u pelican-panel"
+        ok "pelican-panel service"
+    fi
 
-setup_wings_service() {
-    log "Installing wings systemd service..."
-    cat > /etc/systemd/system/pelican-wings.service << SRVEOF
+    if [ "$INSTALL_WINGS" = "yes" ]; then
+        say "installing pelican-wings service..."
+        cat > /etc/systemd/system/pelican-wings.service << UNIT
 [Unit]
 Description=Pelican Wings Daemon
 After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/wings --config=/etc/pelican/wings.yml
+ExecStart=$INSTALL_DIR/wings --config=$CONFIG_DIR/config.yml
 Restart=always
 RestartSec=10
 LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-SRVEOF
-    systemctl daemon-reload
-    systemctl enable pelican-wings
-    good "Wings service installed"
-    warn "Start Wings after setting uuid/token_id/token in /etc/pelican/wings.yml"
+UNIT
+        systemctl daemon-reload
+        systemctl enable pelican-wings
+        ok "pelican-wings service (stopped — configure token first!)"
+    fi
 }
 
-# ---- Firewall ----
+# ── firewall ────────────────────────────────────────────────────────────────────────
+
 setup_firewall() {
-    log "Configuring firewall..."
-    if command -v ufw &>/dev/null; then
-        ufw allow 80/tcp  2>/dev/null || true
-        ufw allow 443/tcp 2>/dev/null || true
-        ufw allow 2022/tcp 2>/dev/null || true
-        ufw allow 8080/tcp 2>/dev/null || true
+    [ "$CONFIGURE_FIREWALL" != "yes" ] && return
+    say "configuring firewall..."
+
+    if check_cmd ufw; then
+        for p in 80 443 2022 8080; do ufw allow "$p"/tcp 2>/dev/null; done
         ufw --force reload
-    elif command -v firewall-cmd &>/dev/null; then
-        firewall-cmd --zone=public --add-port=80/tcp --permanent
-        firewall-cmd --zone=public --add-port=443/tcp --permanent
-        firewall-cmd --zone=public --add-port=2022/tcp --permanent
-        firewall-cmd --zone=public --add-port=8080/tcp --permanent
+    elif check_cmd firewall-cmd; then
+        for p in 80 443 2022 8080; do firewall-cmd --zone=public --add-port="$p"/tcp --permanent 2>/dev/null; done
         firewall-cmd --reload
     fi
-    good "Firewall configured"
+    ok "firewall"
 }
 
-# ---- Main ----
+# ── show summary ────────────────────────────────────────────────────────────────────
+
+summary() {
+    echo ""
+    echo -e "${G}══════════════════════════════════════════════════════${N}"
+    echo -e "${G}               Installation Complete                   ${N}"
+    echo -e "${G}══════════════════════════════════════════════════════${N}"
+    echo ""
+
+    if [ "$INSTALL_PANEL" = "yes" ]; then
+        echo -e "  ${B}Panel${N}"
+        echo "  ├─ URL:      ${PROTO:-http}://${PANEL_FQDN}"
+        echo "  ├─ Binary:   $INSTALL_DIR/panel"
+        echo "  ├─ Config:   $CONFIG_DIR/panel.yml"
+        echo "  ├─ Service:  systemctl status pelican-panel"
+        echo "  ├─ Logs:     journalctl -u pelican-panel -f"
+        echo "  ├─ DB name:  $MYSQL_DB"
+        echo "  ├─ DB user:  $MYSQL_USER"
+        echo "  └─ DB pass:  $MYSQL_PASSWORD"
+        echo ""
+    fi
+
+    if [ "$INSTALL_WINGS" = "yes" ]; then
+        echo -e "  ${B}Wings${N}"
+        echo "  ├─ Binary:   $INSTALL_DIR/wings"
+        echo "  ├─ Config:   $CONFIG_DIR/config.yml"
+        echo "  └─ Service:  systemctl start pelican-wings"
+        echo "     (set uuid, token_id, token in config.yml first!)"
+        echo ""
+    fi
+
+    if [ "$INSTALL_WINGS" = "yes" ]; then
+        echo -e "  ${Y}Next steps:${N}"
+        echo "  1. Open ${PROTO:-http}://${PANEL_FQDN} in your browser"
+        echo "  2. Create an admin user via the panel"
+        echo "  3. Add a Node in the admin panel to generate a Wings token"
+        echo "  4. Copy uuid + token_id + token into $CONFIG_DIR/config.yml"
+        echo "  5. Start Wings: systemctl start pelican-wings"
+    else
+        echo -e "  ${Y}Next steps:${N}"
+        echo "  1. Open ${PROTO:-http}://${PANEL_FQDN} in your browser"
+        echo "  2. Create an admin user"
+    fi
+    echo ""
+}
+
+# ── main ────────────────────────────────────────────────────────────────────────────
+
 main() {
-    banner
+    header
+    os_detect
 
-    detect_os
+    say "checking dependencies..."
+    need_curl
+    need_git
 
-    log "Installing dependencies..."
-    install_go
-    pkg_install curl git tar certbot
+    if [ "$INSTALL_PANEL" = "yes" ]; then
+        need_mariadb
+        need_redis
+        need_nginx
+    fi
 
-    if [ "$INSTALL_PANEL" = true ]; then
-        log ""
-        log "====== Panel Installation ======"
-        mkdir -p "$INSTALL_DIR"
-        install_mariadb
-        install_redis
-        setup_database
-        build_panel
+    if [ "$INSTALL_WINGS" = "yes" ]; then
+        need_docker
+    fi
+
+    need_go
+    need_certbot
+    say "all dependencies satisfied"
+
+    # clone and build
+    local src
+    src=$(clone_repo)
+    mkdir -p "$INSTALL_DIR"
+
+    if [ "$INSTALL_PANEL" = "yes" ]; then
+        build_panel "$src"
+        setup_db
         write_panel_config
-        setup_panel_service
     fi
 
-    if [ "$INSTALL_WINGS" = true ]; then
-        log ""
-        log "====== Wings Installation ======"
-        mkdir -p "$INSTALL_DIR"
-        install_docker
-        build_wings
+    if [ "$INSTALL_WINGS" = "yes" ]; then
+        build_wings "$src"
         write_wings_config
-        setup_wings_service
     fi
 
-    install_nginx
-    write_nginx_config
+    install_services
 
-    if [ "$CONFIGURE_FIREWALL" = true ]; then
-        setup_firewall
+    if [ "$INSTALL_NGINX" = "yes" ] && [ "$INSTALL_PANEL" = "yes" ]; then
+        setup_nginx
     fi
 
-    echo ""
-    echo -e "${C_G}════════════════════════════════════════${C_NC}"
-    echo -e "${C_G}     Installation Complete!${C_NC}"
-    echo -e "${C_G}════════════════════════════════════════${C_NC}"
-    echo ""
-    if [ "$INSTALL_PANEL" = true ]; then
-        echo "  Panel:    http://${FQDN}"
-        echo "  Service:  systemctl status pelican-panel"
-        echo "  Config:   /etc/pelican/panel.yml"
-        echo "  Logs:     journalctl -u pelican-panel -f"
-        echo ""
-        echo "  DB name:     ${MYSQL_DB}"
-        echo "  DB user:     ${MYSQL_USER}"
-        echo "  DB password: ${MYSQL_PASSWORD}"
-        echo ""
-    fi
-    if [ "$INSTALL_WINGS" = true ]; then
-        echo "  Wings:    systemctl status pelican-wings"
-        echo "  Config:   /etc/pelican/wings.yml"
-        echo "  Logs:     journalctl -u pelican-wings -f"
-        echo ""
-        echo "  IMPORTANT: Edit /etc/pelican/wings.yml with node uuid,"
-        echo "  token_id, and token from Panel before starting Wings:"
-        echo "    systemctl start pelican-wings"
-        echo ""
-    fi
+    setup_firewall
+    summary
+
+    # cleanup source to save space
+    rm -rf "$src"
+    say "cleaned build source"
 }
 
 main "$@"
