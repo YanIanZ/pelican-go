@@ -8,9 +8,10 @@ set -euo pipefail
 #                                                                                     #
 #   github.com/YanIanZ/pelican-go                                                     #
 #                                                                                     #
-#   One-command install from local source.                                       #
+#   Usage:                                                                            #
+#     bash <(curl -s https://raw.githubusercontent.com/YanIanZ/pelican-go/main/kaneil-installer/install.sh)
 #                                                                                     #
-#   Usage (from repo root):                                                           #
+#   Or locally from the repo:                                                         #
 #     cd kaneil-installer && sudo ./install.sh                                        #
 #                                                                                     #
 #   Env vars (non-interactive):                                                       #
@@ -163,28 +164,45 @@ need_nginx() {
 }
 
 need_curl()     { check_cmd curl     || { pkg_update; pkg curl;     }; ok "curl"; }
+need_git()      { check_cmd git      || { pkg_update; pkg git;      }; ok "git"; }
 need_certbot()  { check_cmd certbot  || { pkg_update; pkg certbot;  }; ok "certbot"; }
 
-# ── build from local source ──────────────────────────────────────────────────────────
-# installer lives in kaneil-installer/, panel/ and wings/ are siblings
-_script_dir="$(cd "$(dirname "$0")" && pwd)"
-_project_dir="$(dirname "$_script_dir")"
+# ── source detection ────────────────────────────────────────────────────────────────
+# When run via curl pipe, install.sh is standalone with no sibling panel/wings.
+# We auto-detect: if panel/wings exist locally use them, otherwise clone from GitHub.
+
+REPO_URL="${REPO_URL:-https://github.com/YanIanZ/pelican-go.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+TMP_SRC="/tmp/pelican-src"
+
+resolve_source() {
+    if [ -f "$PANEL_SRC/go.mod" ]; then
+        _src_mode="local"
+        say "using local source: $PANEL_SRC"
+    else
+        _src_mode="remote"
+        say "fetching source from $REPO_URL ($REPO_BRANCH)..."
+        rm -rf "$TMP_SRC"
+        git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$TMP_SRC"
+        PANEL_SRC="$TMP_SRC/panel"
+        WINGS_SRC="$TMP_SRC/wings"
+        ok "source cloned"
+    fi
+}
 
 build_panel() {
-    local src="${PANEL_SRC:-$_project_dir/panel}"
-    [ -f "$src/go.mod" ] || die "panel source not found at $src"
+    [ -f "$PANEL_SRC/go.mod" ] || die "panel source not found at $PANEL_SRC"
     say "building panel..."
-    cd "$src"
+    cd "$PANEL_SRC"
     go mod download
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/panel" ./cmd/panel
     ok "panel → $INSTALL_DIR/panel"
 }
 
 build_wings() {
-    local src="${WINGS_SRC:-$_project_dir/wings}"
-    [ -f "$src/go.mod" ] || die "wings source not found at $src"
+    [ -f "$WINGS_SRC/go.mod" ] || die "wings source not found at $WINGS_SRC"
     say "building wings..."
-    cd "$src"
+    cd "$WINGS_SRC"
     go mod download
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/wings" .
     ok "wings → $INSTALL_DIR/wings"
@@ -513,6 +531,7 @@ main() {
 
     say "checking dependencies..."
     need_curl
+    need_git
 
     if [ "$INSTALL_PANEL" = "yes" ]; then
         need_mariadb
@@ -527,6 +546,13 @@ main() {
     need_go
     need_certbot
     say "all dependencies satisfied"
+
+    # detect local source or clone from GitHub
+    _script_dir="$(cd "$(dirname "$0")" && pwd)"
+    _project_dir="$(dirname "$_script_dir")"
+    PANEL_SRC="${PANEL_SRC:-$_project_dir/panel}"
+    WINGS_SRC="${WINGS_SRC:-$_project_dir/wings}"
+    resolve_source
 
     mkdir -p "$INSTALL_DIR"
 
@@ -549,6 +575,8 @@ main() {
 
     setup_firewall
     summary
+
+    [ "$_src_mode" = "remote" ] && rm -rf "$TMP_SRC"
 }
 
 main "$@"
