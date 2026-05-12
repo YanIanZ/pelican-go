@@ -16,6 +16,8 @@ type Webhook struct {
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Server Server `gorm:"foreignKey:ServerID" json:"server,omitempty"`
 }
 
 func (Webhook) TableName() string { return "webhooks" }

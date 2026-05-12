@@ -26,6 +26,8 @@ type ModelHasRole struct {
 	RoleID    uint   `gorm:"primaryKey" json:"role_id"`
 	ModelType string `gorm:"primaryKey;size:255" json:"model_type"`
 	ModelID   string `gorm:"primaryKey;size:36" json:"model_id"`
+
+	Role Role `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 }
 
 func (ModelHasRole) TableName() string { return "model_has_roles" }
