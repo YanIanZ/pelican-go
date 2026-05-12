@@ -177,17 +177,41 @@ resolve_source() {
 # ─── build ───────────────────────────────────────────────────────────────────
 
 build_panel() {
-    log "building panel..."
+    log "building panel (downloading Go modules, this may take a minute)..."
     cd "$PANEL_SRC"
-    go mod download
+    export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
+    go mod download -x 2>/dev/null &
+    local pid=$!
+    local dots="."
+    while kill -0 $pid 2>/dev/null; do
+        printf "\r → downloading modules%s   " "$dots"
+        dots="${dots}."
+        [ ${#dots} -gt 30 ] && dots="."
+        sleep 2
+    done
+    wait $pid || true
+    echo ""
+    log "compiling panel..."
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/panel" ./cmd/panel
     ok "panel → $INSTALL_DIR/panel"
 }
 
 build_wings() {
-    log "building wings..."
+    log "building wings (downloading Go modules, this may take a minute)..."
     cd "$WINGS_SRC"
-    go mod download
+    export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
+    go mod download -x 2>/dev/null &
+    local pid=$!
+    local dots="."
+    while kill -0 $pid 2>/dev/null; do
+        printf "\r → downloading modules%s   " "$dots"
+        dots="${dots}."
+        [ ${#dots} -gt 30 ] && dots="."
+        sleep 2
+    done
+    wait $pid || true
+    echo ""
+    log "compiling wings..."
     CGO_ENABLED=0 go build -ldflags="-s -w" -o "$INSTALL_DIR/wings" .
     ok "wings → $INSTALL_DIR/wings"
 }
