@@ -7,9 +7,12 @@ set -euo pipefail
 #
 #  Usage:
 #    bash <(curl -fsSL https://raw.githubusercontent.com/YanIanZ/pelican-go/main/install.sh)
+#    bash <(curl ...) --uninstall          # remove everything
+#    bash <(curl ...) --panel-only         # panel only
+#    bash <(curl ...) --wings-only         # wings only
 #
 #  Options (env vars):
-#    FQDN=my.host MYSQL_PASSWORD=secret INSTALL_WINGS=no sudo -E bash install.sh
+#    FQDN=my.host MYSQL_PASSWORD=secret sudo -E bash install.sh
 # =============================================================================
 
 [[ $EUID -eq 0 ]] || { echo "[!] must run as root" >&2; exit 1; }
@@ -19,7 +22,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 INSTALL_PANEL="${INSTALL_PANEL:-yes}"
 INSTALL_WINGS="${INSTALL_WINGS:-yes}"
-FQDN="${FQDN:-$(hostname -f 2>/dev/null || echo localhost)}"
+FQDN="${FQDN:-}"
 MYSQL_DB="${MYSQL_DB:-pelican}"
 MYSQL_USER="${MYSQL_USER:-pelican}"
 MYSQL_PASSWORD="${MYSQL_PASSWORD:-$(head -c24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c24)}"
@@ -34,6 +37,16 @@ REPO_BRANCH="${REPO_BRANCH:-main}"
 PANEL_SRC=""
 WINGS_SRC=""
 
+# ─── CLI flags ──────────────────────────────────────────────────────────────
+
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall)    UNINSTALL=yes;;
+        --panel-only)   INSTALL_PANEL=yes; INSTALL_WINGS=no;;
+        --wings-only)   INSTALL_PANEL=no;  INSTALL_WINGS=yes;;
+    esac
+done
+
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; N='\033[0m'
@@ -45,12 +58,65 @@ die()  { echo -e "${R}✗ $*${N}" >&2; exit 1; }
 check_cmd() { command -v "$1" &>/dev/null; }
 finish()   { rm -rf /tmp/pelican-src; }
 
+# detect public IP when no FQDN is set
+detect_ip() {
+    local ip
+    ip=$(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null)     || \
+    ip=$(curl -fsSL --max-time 5 https://icanhazip.com 2>/dev/null)   || \
+    ip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null)   || \
+    ip=$(curl -fsSL --max-time 5 https://checkip.amazonaws.com 2>/dev/null)
+    echo "$ip"
+}
+
 banner() {
     echo ""
     echo -e "${B}╔══════════════════════════════════════════════╗${N}"
     echo -e "${B}║     ${G}Pelican (Go) — Panel + Wings Installer${B}     ║${N}"
     echo -e "${B}╚══════════════════════════════════════════════╝${N}"
     echo ""
+}
+
+# ─── uninstall ────────────────────────────────────────────────────────────────
+
+do_uninstall() {
+    echo ""
+    echo -e "${Y}══════════════════════════════════════════════════════${N}"
+    echo -e "${Y}               Pelican Uninstaller                    ${N}"
+    echo -e "${Y}══════════════════════════════════════════════════════${N}"
+    echo ""
+    echo "This will remove all Pelican components."
+    echo -n "Continue? [y/N]: "
+    read -r confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || { echo "cancelled."; exit 0; }
+
+    log "stopping services..."
+    systemctl stop pelican-panel 2>/dev/null || true
+    systemctl stop pelican-wings 2>/dev/null || true
+    systemctl disable pelican-panel 2>/dev/null || true
+    systemctl disable pelican-wings 2>/dev/null || true
+
+    log "removing files..."
+    rm -f /etc/systemd/system/pelican-panel.service
+    rm -f /etc/systemd/system/pelican-wings.service
+    rm -f /etc/nginx/sites-enabled/pelican 2>/dev/null
+    rm -f /etc/nginx/sites-available/pelican 2>/dev/null
+    rm -rf /opt/pelican
+    rm -rf /etc/pelican
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || true
+
+    echo -n "Drop database '${MYSQL_DB}' and user '${MYSQL_USER}'? [y/N]: "
+    read -r drop
+    if [[ "$drop" =~ ^[Yy]$ ]]; then
+        local m="mariadb"; check_cmd mysql && m="mysql"
+        $m -u root -e "DROP DATABASE IF EXISTS \`${MYSQL_DB}\`;" 2>/dev/null || true
+        $m -u root -e "DROP USER IF EXISTS '${MYSQL_USER}'@'127.0.0.1';" 2>/dev/null || true
+        ok "database removed"
+    fi
+
+    echo ""
+    ok "Pelican uninstalled"
+    exit 0
 }
 
 # ─── OS / arch detection ────────────────────────────────────────────────────
@@ -520,6 +586,19 @@ summary() {
 # ─── main ────────────────────────────────────────────────────────────────────
 
 trap finish EXIT
+
+[ "${UNINSTALL:-no}" = "yes" ] && do_uninstall
+
+# auto-detect public IP if no FQDN set
+if [ -z "$FQDN" ]; then
+    FQDN="$(hostname -f 2>/dev/null || true)"
+    if [ -z "$FQDN" ] || [ "$FQDN" = "localhost" ]; then
+        log "detecting public IP..."
+        FQDN="$(detect_ip)"
+        [ -n "$FQDN" ] || FQDN="localhost"
+        ok "public IP: $FQDN"
+    fi
+fi
 
 banner
 detect_os
