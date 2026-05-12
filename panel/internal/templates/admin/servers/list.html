@@ -1,0 +1,26 @@
+{{define "title"}}Servers - Pelican Admin{{end}}
+{{define "content"}}
+<hgroup><h1>Servers</h1><p>Manage all game servers</p></hgroup>
+<nav class="grid">
+    <input type="search" name="search" placeholder="Search servers..."
+        hx-get="/admin/servers" hx-trigger="keyup changed delay:300ms"
+        hx-target="#server-table" hx-swap="outerHTML">
+    <a href="/admin/servers/create" role="button">Create Server</a>
+</nav>
+<table id="server-table">
+    <thead><tr><th>Name</th><th>Owner</th><th>Node</th><th>Memory</th><th>Disk</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+        {{range .Servers}}
+        <tr>
+            <td><a href="/admin/servers/{{.ID}}">{{.Name}}</a></td>
+            <td>{{.Owner.Username}}</td>
+            <td>{{.Node.Name}}</td>
+            <td>{{.Memory}} MB</td>
+            <td>{{.Disk}} MB</td>
+            <td>{{.Status}}</td>
+            <td><a href="/admin/servers/{{.ID}}/edit" role="button" class="outline small">Edit</a></td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{end}}

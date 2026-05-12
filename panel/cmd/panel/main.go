@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/pelican-dev/panel/internal/api"
 	"github.com/pelican-dev/panel/internal/auth"
@@ -29,10 +32,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "redis error: %v\n", err)
+		os.Exit(1)
+	}
+
 	jwtKey := []byte("change-me-in-production")
 	jwtManager := auth.NewJWTManager(jwtKey)
 
-	api := api.NewAPI(db, cfg, jwtManager)
+	api := api.NewAPI(db, cfg, jwtManager, rdb)
 
 	go func() {
 		fmt.Println("panel started")

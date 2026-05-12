@@ -1,0 +1,16 @@
+{{define "title"}}Login - Pelican{{end}}
+{{define "content"}}
+<article style="max-width: 480px; margin: 2rem auto;">
+    <hgroup>
+        <h1>Sign In</h1>
+        <p>Enter your credentials to continue</p>
+    </hgroup>
+    <form hx-post="/auth/login" hx-target="#login-error" hx-swap="innerHTML">
+        <div id="login-error" role="alert"></div>
+        <label>Email<input type="email" name="email" required autofocus></label>
+        <label>Password<input type="password" name="password" required></label>
+        <button type="submit">Sign In</button>
+    </form>
+    <footer><small><a href="/auth/register">Create account</a> &middot; <a href="/auth/password/forgot">Forgot password?</a></small></footer>
+</article>
+{{end}}

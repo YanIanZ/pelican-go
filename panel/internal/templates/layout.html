@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{block "title" .}}Pelican{{end}}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+    <script src="https://unpkg.com/alpinejs@3.14.9" defer></script>
+    {{block "head" .}}{{end}}
+</head>
+<body>
+    <nav class="container-fluid">
+        <ul><li><strong><a href="/">Pelican</a></strong></li></ul>
+        <ul>
+            {{if .User}}
+            <li><span>{{.User.Username}}</span></li>
+            <li><a href="/auth/logout">Logout</a></li>
+            {{end}}
+        </ul>
+    </nav>
+    <main class="container">{{block "content" .}}{{end}}</main>
+</body>
+</html>

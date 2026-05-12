@@ -2,12 +2,14 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/pelican-dev/panel/internal/api/application"
 	clientapi "github.com/pelican-dev/panel/internal/api/client"
 	"github.com/pelican-dev/panel/internal/api/middleware"
 	"github.com/pelican-dev/panel/internal/api/remote"
+	"github.com/pelican-dev/panel/internal/api/web"
 	"github.com/pelican-dev/panel/internal/auth"
 	"github.com/pelican-dev/panel/internal/config"
 )
@@ -19,10 +21,13 @@ type API struct {
 	JWT    *auth.JWTManager
 }
 
-func NewAPI(db *gorm.DB, cfg *config.Config, jwtManager *auth.JWTManager) *API {
+func NewAPI(db *gorm.DB, cfg *config.Config, jwtManager *auth.JWTManager, rdb *redis.Client) *API {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
+
+	sessionManager := auth.NewSessionManager(rdb)
+	r.Use(sessionManager.Middleware())
 
 	api := &API{
 		Router: r,
@@ -31,11 +36,11 @@ func NewAPI(db *gorm.DB, cfg *config.Config, jwtManager *auth.JWTManager) *API {
 		JWT:    jwtManager,
 	}
 
-	api.registerRoutes()
+	api.registerRoutes(sessionManager)
 	return api
 }
 
-func (api *API) registerRoutes() {
+func (api *API) registerRoutes(sm *auth.SessionManager) {
 	r := api.Router
 
 	r.GET("/api/health", func(c *gin.Context) {
@@ -183,4 +188,14 @@ func (api *API) registerRoutes() {
 		client.POST("/servers/:uuid/users/:userUuid", clSubuserHandler.Update)
 		client.DELETE("/servers/:uuid/users/:userUuid", clSubuserHandler.Delete)
 	}
+
+	authCtrl := web.NewAuthController(api.DB, sm)
+	adminCtrl := web.NewAdminController(api.DB, sm)
+
+	r.GET("/", adminCtrl.Dashboard)
+	r.GET("/auth/login", authCtrl.LoginPage)
+	r.POST("/auth/login", authCtrl.Login)
+	r.GET("/auth/logout", authCtrl.Logout)
+	r.GET("/admin", adminCtrl.Dashboard)
+	r.GET("/admin/servers", adminCtrl.ServersList)
 }

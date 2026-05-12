@@ -1,0 +1,16 @@
+{{define "title"}}Admin Dashboard - Pelican{{end}}
+{{define "content"}}
+<hgroup><h1>Admin Dashboard</h1><p>System overview</p></hgroup>
+<div class="grid">
+    <article><h5>Total Servers</h5><h2>{{.ServerCount}}</h2></article>
+    <article><h5>Total Nodes</h5><h2>{{.NodeCount}}</h2></article>
+    <article><h5>Total Users</h5><h2>{{.UserCount}}</h2></article>
+</div>
+<nav>
+    <ul>
+        <li><a href="/admin/servers" role="button" class="outline">Manage Servers</a></li>
+        <li><a href="/admin/nodes" role="button" class="outline">Manage Nodes</a></li>
+        <li><a href="/admin/users" role="button" class="outline">Manage Users</a></li>
+    </ul>
+</nav>
+{{end}}
