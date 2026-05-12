@@ -23,6 +23,7 @@ type AppConfig struct {
 	URL      string `mapstructure:"url"`
 	Timezone string `mapstructure:"timezone"`
 	Locale   string `mapstructure:"locale"`
+	Secret   string `mapstructure:"secret"`
 }
 
 type DatabaseConfig struct {
@@ -90,6 +91,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.debug", false)
 	v.SetDefault("app.url", "http://localhost")
 	v.SetDefault("app.timezone", "UTC")
+	v.SetDefault("app.secret", "")
 	v.SetDefault("app.locale", "en")
 	v.SetDefault("database.driver", "mysql")
 	v.SetDefault("database.host", "127.0.0.1")

@@ -12,6 +12,7 @@ import (
 	"github.com/pelican-dev/panel/internal/api/web"
 	"github.com/pelican-dev/panel/internal/auth"
 	"github.com/pelican-dev/panel/internal/config"
+	"github.com/pelican-dev/panel/internal/websockets"
 )
 
 type API struct {
@@ -29,6 +30,9 @@ func NewAPI(db *gorm.DB, cfg *config.Config, jwtManager *auth.JWTManager, rdb *r
 	sessionManager := auth.NewSessionManager(rdb)
 	r.Use(sessionManager.Middleware())
 
+	wsHub := websockets.NewHub()
+	wsHandler := websockets.NewHandler(wsHub)
+
 	api := &API{
 		Router: r,
 		DB:     db,
@@ -36,11 +40,11 @@ func NewAPI(db *gorm.DB, cfg *config.Config, jwtManager *auth.JWTManager, rdb *r
 		JWT:    jwtManager,
 	}
 
-	api.registerRoutes(sessionManager)
+	api.registerRoutes(sessionManager, wsHandler)
 	return api
 }
 
-func (api *API) registerRoutes(sm *auth.SessionManager) {
+func (api *API) registerRoutes(sm *auth.SessionManager, wsHandler *websockets.Handler) {
 	r := api.Router
 
 	r.GET("/api/health", func(c *gin.Context) {
@@ -191,11 +195,26 @@ func (api *API) registerRoutes(sm *auth.SessionManager) {
 
 	authCtrl := web.NewAuthController(api.DB, sm)
 	adminCtrl := web.NewAdminController(api.DB, sm)
+	serverCtrl := web.NewServerController(api.DB, sm)
 
-	r.GET("/", adminCtrl.Dashboard)
+	admin := r.Group("/admin", sm.RequireAuth())
+	{
+		admin.GET("/", adminCtrl.Dashboard)
+		admin.GET("/servers", adminCtrl.ServersList)
+	}
+	server := r.Group("/servers", sm.RequireAuth())
+	{
+		server.GET("/:uuid/console", serverCtrl.Console)
+		server.GET("/:uuid/files", serverCtrl.Files)
+		server.GET("/:uuid/settings", serverCtrl.Settings)
+		server.GET("/:uuid/backups", serverCtrl.Backups)
+	}
+
+	r.GET("/", sm.RequireAuth(), adminCtrl.Dashboard)
 	r.GET("/auth/login", authCtrl.LoginPage)
 	r.POST("/auth/login", authCtrl.Login)
 	r.GET("/auth/logout", authCtrl.Logout)
-	r.GET("/admin", adminCtrl.Dashboard)
-	r.GET("/admin/servers", adminCtrl.ServersList)
+
+	// WebSocket console relay
+	r.GET("/api/client/servers/:uuid/ws", wsHandler.Handle)
 }

@@ -1,6 +1,8 @@
 package models
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -33,3 +35,8 @@ type APIKey struct {
 }
 
 func (APIKey) TableName() string { return "api_keys" }
+
+func HashToken(raw string) string {
+	h := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", h)
+}

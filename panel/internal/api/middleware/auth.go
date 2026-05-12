@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -90,7 +92,8 @@ func ApplicationAuth(db *gorm.DB) gin.HandlerFunc {
 		if len(token) > 16 {
 			tokenSecret = token[16:]
 		}
-		if subtle.ConstantTimeCompare([]byte(apiKey.Token), []byte(tokenSecret)) != 1 {
+		hashed := sha256.Sum256([]byte(tokenSecret))
+		if subtle.ConstantTimeCompare([]byte(apiKey.Token), []byte(fmt.Sprintf("%x", hashed))) != 1 {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"errors": []gin.H{
 					{"code": "InvalidApiKey", "status": "403", "detail": "Invalid API key"},
@@ -137,7 +140,8 @@ func ClientAuth(db *gorm.DB) gin.HandlerFunc {
 		if len(token) > 16 {
 			tokenSecret = token[16:]
 		}
-		if subtle.ConstantTimeCompare([]byte(apiKey.Token), []byte(tokenSecret)) != 1 {
+		hashed := sha256.Sum256([]byte(tokenSecret))
+		if subtle.ConstantTimeCompare([]byte(apiKey.Token), []byte(fmt.Sprintf("%x", hashed))) != 1 {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"errors": []gin.H{
 					{"code": "InvalidApiKey", "status": "403", "detail": "Invalid API key"},

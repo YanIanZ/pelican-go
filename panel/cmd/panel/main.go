@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/pelican-dev/panel/internal/auth"
 	"github.com/pelican-dev/panel/internal/config"
 	"github.com/pelican-dev/panel/internal/database"
+	"github.com/pelican-dev/panel/internal/jobs"
 )
 
 func main() {
@@ -43,14 +46,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	jwtKey := []byte("change-me-in-production")
+	jwtKey := []byte(cfg.App.Secret)
+	if len(jwtKey) == 0 {
+		jwtKey = []byte(os.Getenv("PANEL_APP_SECRET"))
+	}
+	if len(jwtKey) == 0 {
+		jwtKey = []byte("change-me-in-production")
+	}
 	jwtManager := auth.NewJWTManager(jwtKey)
 
-	api := api.NewAPI(db, cfg, jwtManager, rdb)
+	router := api.NewAPI(db, cfg, jwtManager, rdb)
 
+	queue := jobs.NewQueue(rdb, db)
 	go func() {
-		fmt.Println("panel started")
-		if err := api.Router.Run(":8080"); err != nil {
+		if err := queue.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "queue error: %v\n", err)
+		}
+	}()
+
+	srv := &http.Server{Addr: ":8080", Handler: router.Router}
+	go func() {
+		fmt.Println("panel started on :8080")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 			os.Exit(1)
 		}
@@ -59,5 +76,17 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	fmt.Println("shutting down")
+
+	fmt.Println("shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+
+	sqlDB, _ := db.DB()
+	if sqlDB != nil {
+		sqlDB.Close()
+	}
+	if rdb != nil {
+		rdb.Close()
+	}
 }

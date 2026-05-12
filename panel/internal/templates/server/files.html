@@ -1,0 +1,15 @@
+{{define "title"}}{{.Server.Name}} - Files - Pelican{{end}}
+{{define "content"}}
+<hgroup><h1>{{.Server.Name}}</h1><p>File Manager</p></hgroup>
+<nav>
+    <ul>
+        <li><a href="/servers/{{.Server.UUID}}/console" role="button" class="outline">Console</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/files" role="button">Files</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/settings" role="button" class="outline">Settings</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/backups" role="button" class="outline">Backups</a></li>
+    </ul>
+</nav>
+<div id="file-browser" hx-get="/api/client/servers/{{.Server.UUID}}/files/list" hx-trigger="load" hx-swap="innerHTML">
+    <p>Loading files...</p>
+</div>
+{{end}}

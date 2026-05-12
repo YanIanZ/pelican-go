@@ -1,0 +1,51 @@
+{{define "title"}}{{.Server.Name}} - Console - Pelican{{end}}
+{{define "head"}}
+<style>
+#console-output {
+    background: #1a1a2e; color: #e0e0e0; font-family: monospace;
+    font-size: 13px; height: 400px; overflow-y: scroll;
+    padding: 1rem; border-radius: 8px; white-space: pre-wrap;
+}
+</style>
+{{end}}
+{{define "content"}}
+<hgroup><h1>{{.Server.Name}}</h1><p>Console</p></hgroup>
+<nav>
+    <ul>
+        <li><a href="/servers/{{.Server.UUID}}/console" role="button">Console</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/files" role="button" class="outline">Files</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/settings" role="button" class="outline">Settings</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/backups" role="button" class="outline">Backups</a></li>
+    </ul>
+    <ul>
+        <li><button onclick="powerAction('start')" class="outline">Start</button></li>
+        <li><button onclick="powerAction('restart')" class="outline">Restart</button></li>
+        <li><button onclick="powerAction('stop')">Stop</button></li>
+    </ul>
+</nav>
+<div id="console-output"></div>
+<form class="grid" style="margin-top:1rem" onsubmit="sendCommand(event)">
+    <input type="text" id="command-input" placeholder="Enter command..." autofocus>
+    <button type="submit">Send</button>
+</form>
+<script>
+const serverUUID = '{{.Server.UUID}}';
+function powerAction(signal) {
+    fetch(`/api/client/servers/${serverUUID}/power`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({signal})
+    });
+}
+function sendCommand(e) {
+    e.preventDefault();
+    const input = document.getElementById('command-input');
+    fetch(`/api/client/servers/${serverUUID}/command`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({command: input.value})
+    });
+    input.value = '';
+}
+</script>
+{{end}}

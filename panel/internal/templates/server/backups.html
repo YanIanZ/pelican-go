@@ -1,0 +1,19 @@
+{{define "title"}}{{.Server.Name}} - Backups - Pelican{{end}}
+{{define "content"}}
+<hgroup><h1>{{.Server.Name}}</h1><p>Backups</p></hgroup>
+<nav>
+    <ul>
+        <li><a href="/servers/{{.Server.UUID}}/console" role="button" class="outline">Console</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/files" role="button" class="outline">Files</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/settings" role="button" class="outline">Settings</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/backups" role="button">Backups</a></li>
+    </ul>
+</nav>
+<form class="grid" hx-post="/api/client/servers/{{.Server.UUID}}/backups" hx-target="#backup-list" style="margin-bottom:1rem">
+    <input type="text" name="name" placeholder="Backup name" required>
+    <button type="submit">Create Backup</button>
+</form>
+<div id="backup-list" hx-get="/api/client/servers/{{.Server.UUID}}/backups" hx-trigger="load">
+    <p>Loading backups...</p>
+</div>
+{{end}}

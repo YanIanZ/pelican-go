@@ -1,0 +1,34 @@
+{{define "title"}}{{.Server.Name}} - Settings - Pelican{{end}}
+{{define "content"}}
+<hgroup><h1>{{.Server.Name}}</h1><p>Settings</p></hgroup>
+<nav>
+    <ul>
+        <li><a href="/servers/{{.Server.UUID}}/console" role="button" class="outline">Console</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/files" role="button" class="outline">Files</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/settings" role="button">Settings</a></li>
+        <li><a href="/servers/{{.Server.UUID}}/backups" role="button" class="outline">Backups</a></li>
+    </ul>
+</nav>
+<article>
+    <h3>Server Name</h3>
+    <form hx-post="/api/client/servers/{{.Server.UUID}}/settings/rename" hx-target="#rename-status">
+        <div id="rename-status"></div>
+        <input type="text" name="name" value="{{.Server.Name}}" required>
+        <button type="submit">Rename</button>
+    </form>
+</article>
+<article>
+    <h3>Danger Zone</h3>
+    <button onclick="if(confirm('Reinstall server? This will delete all files.'))powerAction('reinstall')">Reinstall Server</button>
+</article>
+<script>
+const serverUUID = '{{.Server.UUID}}';
+function powerAction(signal) {
+    fetch(`/api/client/servers/${serverUUID}/power`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({signal})
+    });
+}
+</script>
+{{end}}
