@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -71,7 +72,7 @@ func Load(path string) (*Config, error) {
 	setDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		if !os.IsNotExist(err) {
 			return nil, err
 		}
 	}
@@ -93,6 +94,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.driver", "mysql")
 	v.SetDefault("database.host", "127.0.0.1")
 	v.SetDefault("database.port", 3306)
+	v.SetDefault("database.database", "pelican")
 	v.SetDefault("database.charset", "utf8mb4")
 	v.SetDefault("database.collation", "utf8mb4_unicode_ci")
 	v.SetDefault("redis.host", "127.0.0.1")
